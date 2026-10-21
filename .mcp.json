@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "openshift": {
+      "type": "stdio",
+      "command": "/Users/lzh/ocp-row7-demo-assets/connect-openshift-route.sh"
+    }
+  }
+}

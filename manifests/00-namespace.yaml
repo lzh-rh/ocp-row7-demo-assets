@@ -1,0 +1,21 @@
+# Isolated demo namespace. Nothing outside this namespace (and the one cluster-scoped
+# ValidatingAdmissionPolicy in 02-*) is touched by this demo.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: acme-demo
+  labels:
+    # Native Pod Security Admission — enforce the Kubernetes "restricted" standard.
+    # This is the always-on native backstop for "no root" (ACME rule 1).
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+    # Marker used by the ValidatingAdmissionPolicyBinding to scope enforcement
+    # to THIS namespace only (kubernetes.io/metadata.name is auto-set too).
+    acme-demo: "true"
+    # Ownership of record, set by the platform team when the namespace is handed out.
+    # The agent READS these and copies them onto the Deployment, pod template, and optional
+    # Service, so one Skill stays correct for every team instead of hardcoding values.
+    team: payments
+    cost-center: "cc-4812"

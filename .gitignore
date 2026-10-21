@@ -1,0 +1,10 @@
+# Python
+__pycache__/
+*.pyc
+
+# Local, per-machine Claude / MCP overrides (personal — don't commit)
+.claude/settings.local.json
+.mcp.json.*-backup-*
+
+# macOS
+.DS_Store

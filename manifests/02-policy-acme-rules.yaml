@@ -1,0 +1,103 @@
+# Headline enforcer: one native ValidatingAdmissionPolicy (CEL) that checks a
+# Deployment and its pod template against ALL THREE ACME rules at admission time, so a
+# non-compliant Deployment is REJECTED IMMEDIATELY.
+#
+# This is 100% native OpenShift/Kubernetes (admissionregistration.k8s.io/v1, GA since
+# K8s 1.30). The policy is cluster-scoped but ENFORCES ONLY in the acme-demo namespace
+# via the binding's namespaceSelector. Both objects are deleted by teardown.sh.
+#
+# WHY ONE VALIDATION INSTEAD OF SEVEN (important for the demo):
+# The API server reports only the FIRST failing validation. With one validation per
+# rule, the trap was rejected with just "missing labels" -- the least interesting rule,
+# and it contradicted the narration ("runs as root, no limits, no labels"). Here a
+# single validation evaluates all three rule groups and uses messageExpression to list
+# EVERY violated rule in one rejection. Verified live 2026-10-13.
+#
+# Bonus: computing the checks in `variables` also removed the cosmetic CEL type-check
+# warning that the earlier per-rule version printed for resources.requests/limits.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: acme-deployment-rules
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["deployments"]
+  variables:
+    - name: tmpl
+      expression: object.spec.template
+    - name: deploymentLabels
+      expression: "has(object.metadata.labels) ? object.metadata.labels : {}"
+    - name: templateLabels
+      expression: "has(variables.tmpl.metadata) && has(variables.tmpl.metadata.labels) ? variables.tmpl.metadata.labels : {}"
+    - name: namespaceLabels
+      expression: "has(namespaceObject.metadata.labels) ? namespaceObject.metadata.labels : {}"
+    - name: podSC
+      expression: "has(variables.tmpl.spec.securityContext) ? variables.tmpl.spec.securityContext : {}"
+    - name: containers
+      expression: variables.tmpl.spec.containers
+
+    # --- ACME rule 3: ownership labels on the Deployment and pod template ---
+    # `team` and `cost-center` must match the namespace's platform-owned labels. Merely
+    # supplying those keys is not enough: a workload cannot claim another team's values.
+    - name: okLabels
+      expression: >
+        'team' in variables.namespaceLabels && 'cost-center' in variables.namespaceLabels &&
+        'app' in variables.deploymentLabels &&
+        'team' in variables.deploymentLabels && 'cost-center' in variables.deploymentLabels &&
+        'app' in variables.templateLabels &&
+        'team' in variables.templateLabels && 'cost-center' in variables.templateLabels &&
+        variables.deploymentLabels['app'] == variables.templateLabels['app'] &&
+        variables.deploymentLabels['team'] == variables.namespaceLabels['team'] &&
+        variables.deploymentLabels['cost-center'] == variables.namespaceLabels['cost-center'] &&
+        variables.templateLabels['team'] == variables.namespaceLabels['team'] &&
+        variables.templateLabels['cost-center'] == variables.namespaceLabels['cost-center']
+
+    # --- ACME rule 1: security (no-root + hardened containers) ---
+    # NOTE: deliberately does NOT require runAsUser. Per Red Hat guidance, leave
+    # runAsUser unset so OpenShift assigns a UID from the namespace range.
+    - name: okSecurity
+      expression: >
+        has(variables.podSC.runAsNonRoot) && variables.podSC.runAsNonRoot == true &&
+        has(variables.podSC.seccompProfile) && variables.podSC.seccompProfile.type == 'RuntimeDefault' &&
+        variables.containers.all(c, has(c.securityContext) &&
+          has(c.securityContext.allowPrivilegeEscalation) && c.securityContext.allowPrivilegeEscalation == false &&
+          has(c.securityContext.readOnlyRootFilesystem) && c.securityContext.readOnlyRootFilesystem == true &&
+          has(c.securityContext.capabilities) && has(c.securityContext.capabilities.drop) &&
+          c.securityContext.capabilities.drop.exists(d, d == 'ALL'))
+
+    # --- ACME rule 2: cpu AND memory, requests AND limits, on every container ---
+    # Checking only that the requests/limits maps EXIST is not enough: a container with
+    # cpu-only resources would pass here and then be stopped much later by the
+    # ResourceQuota, at POD creation -- so `oc apply` reports success and you get a
+    # Deployment with zero pods, with the real reason buried in the ReplicaSet conditions.
+    # Verified 2026-10-13. Check the four keys by name so the failure lands at apply time.
+    - name: okResources
+      expression: >
+        variables.containers.all(c, has(c.resources) &&
+          has(c.resources.requests) && 'cpu' in c.resources.requests && 'memory' in c.resources.requests &&
+          has(c.resources.limits) && 'cpu' in c.resources.limits && 'memory' in c.resources.limits)
+
+  validations:
+    - expression: "variables.okSecurity && variables.okResources && variables.okLabels"
+      messageExpression: >
+        "Blocked by ACME platform standards." +
+        (variables.okSecurity ? "" : " [RULE 1 - SECURITY] Pod must set runAsNonRoot:true + seccompProfile:RuntimeDefault; every container must set allowPrivilegeEscalation:false, readOnlyRootFilesystem:true and drop ALL capabilities.") +
+        (variables.okResources ? "" : " [RULE 2 - RESOURCES] Every container must declare cpu+memory requests AND limits.") +
+        (variables.okLabels ? "" : " [RULE 3 - OWNERSHIP] Deployment and pod template must carry app, team and cost-center; team and cost-center must match the namespace labels.")
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: acme-deployment-rules-binding
+spec:
+  policyName: acme-deployment-rules
+  validationActions: ["Deny"]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: acme-demo

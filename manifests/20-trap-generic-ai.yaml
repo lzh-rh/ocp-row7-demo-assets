@@ -1,0 +1,27 @@
+# The TRAP — plausible-looking YAML a GENERIC AI produces. It looks reasonable but
+# breaks all three ACME rules: runs as root (no securityContext), declares no
+# resources, and carries no ownership labels on the Deployment or pod template.
+#
+# Applying this to acme-demo is REJECTED immediately by the ValidatingAdmissionPolicy
+# (and the pods would also be blocked by PSA restricted + the ResourceQuota).
+# This is Beat 2 of the demo: "looks right, isn't."
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payments-api
+  namespace: acme-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: payments-api
+  template:
+    metadata:
+      labels:
+        app: payments-api
+    spec:
+      containers:
+        - name: payments-api
+          image: nginx:latest
+          ports:
+            - containerPort: 8080

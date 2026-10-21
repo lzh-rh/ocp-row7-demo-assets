@@ -1,0 +1,87 @@
+# The COMPLIANT workload — what the OCP5 agent produces by following the Skill.
+# Satisfies all three ACME rules, so it passes the VAP + PSA + ResourceQuota and runs.
+# Keep this as the backup "good take" (spec section 10). In the live demo the agent
+# generates this itself; this file is the reference / fallback.
+#
+# IMPORTANT: this is this app's filled-in version of the placeholder template in
+# .claude/skills/acme-deployment-rules/SKILL.md. Every rule-bearing line must stay
+# IDENTICAL to that template; app-specific extras (e.g. DISABLE_PROFILER) may be added.
+# The Skill is what the agent follows; this file is only your fallback. If they drift,
+# the live beat and the backup take diverge -- which is how the missing `command`
+# bug reached a live run on 2026-10-13, and the missing PORT env on 2026-10-14.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payments-api
+  namespace: acme-demo
+  labels:
+    app: payments-api
+    team: payments
+    cost-center: "cc-4812"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: payments-api
+  template:
+    metadata:
+      labels:
+        app: payments-api
+        team: payments
+        cost-center: "cc-4812"
+    spec:
+      # Don't hand every pod a cluster API token it never uses.
+      # Also clears the RHACS "Pod Service Account Token Automatically Mounted" finding.
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: payments-api
+          # PINNED tag, never :latest. gRPC on 50051 -- this is NOT an HTTP service.
+          image: us-central1-docker.pkg.dev/google-samples/microservices-demo/paymentservice:v0.10.2
+          env:
+            - name: PORT
+              value: "50051"
+            - name: DISABLE_PROFILER
+              value: "1"
+          ports:
+            - containerPort: 50051
+              name: grpc
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        # readOnlyRootFilesystem is true, so scratch space goes in an emptyDir.
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: payments-api
+  namespace: acme-demo
+  labels:
+    app: payments-api
+    team: payments
+    cost-center: "cc-4812"
+spec:
+  selector:
+    app: payments-api
+  ports:
+    - port: 50051
+      targetPort: 50051
+      name: grpc

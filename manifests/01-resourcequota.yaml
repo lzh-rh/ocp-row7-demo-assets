@@ -1,0 +1,15 @@
+# Native backstop for ACME rule 2 (requests + limits).
+# When a ResourceQuota tracks compute resources, Kubernetes requires EVERY pod in the
+# namespace to declare cpu/memory requests AND limits, or the pod is rejected at
+# admission. Caps are generous — the point is to force declarations, not to cap usage.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: acme-require-resources
+  namespace: acme-demo
+spec:
+  hard:
+    requests.cpu: "4"
+    requests.memory: 8Gi
+    limits.cpu: "8"
+    limits.memory: 16Gi

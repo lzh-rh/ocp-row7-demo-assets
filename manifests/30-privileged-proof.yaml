@@ -1,0 +1,54 @@
+# OPTIONAL Beat 4 prop: proof that the cluster blocks a privileged container even when
+# everything ELSE about the workload is compliant (labels, resources, seccomp are all fine).
+#
+# Use this only if someone challenges "would it really be blocked?". Applying it produces
+# TWO independent rejections, which is the stronger answer:
+#   1. a Pod Security Admission warning  -> upstream Kubernetes/OpenShift, not our policy
+#   2. the ACME ValidatingAdmissionPolicy denial -> the organization's own standard
+#
+# Verified 2026-10-13. This never runs; it is rejected at admission.
+#
+# NOTE: privileged:true is deliberately paired with allowPrivilegeEscalation left UNSET.
+# Setting both privileged:true and allowPrivilegeEscalation:false makes Kubernetes' own
+# object validation reject it earlier with a different-looking error, which muddies the point.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: privileged-proof
+  namespace: acme-demo
+  labels:
+    app: privileged-proof
+    team: payments
+    cost-center: "cc-4812"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: privileged-proof
+  template:
+    metadata:
+      labels:
+        app: privileged-proof
+        team: payments
+        cost-center: "cc-4812"
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: privileged-proof
+          image: us-central1-docker.pkg.dev/google-samples/microservices-demo/paymentservice:v0.10.2
+          securityContext:
+            privileged: true          # <-- the one thing wrong
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
